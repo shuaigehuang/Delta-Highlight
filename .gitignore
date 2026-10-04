@@ -1,0 +1,9 @@
+node_modules/
+config.json
+output/
+work/
+material/
+tmp/
+shots/
+*.log
+.DS_Store
