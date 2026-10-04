@@ -16,10 +16,13 @@ Delta Highlight 面向长时间、高码率的游戏录像。它不依赖视频�
 
 程序提供本地 Web 界面，可在浏览器中完成素材选择、进度查看、镜头编辑、音频混入和成品导出。Windows 发布版已经内置 Node.js、Python、OpenCV、NumPy、ffmpeg 和 ffprobe，用户不需要手动配置运行环境。
 
+维护者 B 站主页：<https://space.bilibili.com/471298311>
+
 ## 原作者与来源
 
 - 原作者：Zaphod
 - 原项目：<https://gitee.com/Zaphod/delta-force-automatic-video-editing>
+- B 站主页：<https://space.bilibili.com/13663644>
 - 说明：本项目基于原作者的开源项目进行 Windows 适配、性能优化、资源调度和公开播放兼容性升级；原始项目、模板和相关成果归原作者及对应贡献者所有。
 
 ## 功能特性
