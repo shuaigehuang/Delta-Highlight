@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Delta Force 精彩镜头自动剪辑</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- 顶部导航 -->
+    <nav class="tabs">
+      <button v-for="t in tabs" :key="t.id"
+              :class="{ active: activeTab === t.id }"
+              @click="activeTab = t.id">
+        {{ t.label }}
+      </button>
+      <span class="status-dot" :class="{ running: state.running, done: state.done, error: state.error }"></span>
+      <span class="status-text">{{ statusText }}</span>
+    </nav>
+
+    <!-- 环境状态条 -->
+    <div class="env-bar" :class="envBarClass">
+      <span v-if="performanceInfo && performanceInfo.ready" class="env-perf" :title="performanceInfo.reason || ''">
+        ⚡ v{{ performanceInfo.version || '2.0.8' }} · H.264 / AVC · {{ performanceInfo.encoderLabel }} · {{ Math.round(performanceInfo.encoderFps || 0) }} fps · 扫描 {{ performanceInfo.scanWorkers }} 路并行 · 4K 约 {{ performanceInfo.estimated4kFps }} fps
+      </span>
+      <span v-else-if="performanceInfo" class="env-perf">
+        ⚡ 正在检测设备性能，首次约需数秒...
+      </span>
+
+      <button v-if="performanceInfo" class="resource-btn" @click="openResourceDialog" :disabled="state.running">
+        🎛 资源上限：{{ resourceButtonLabel }}
+      </button>
+
+      <template v-if="envChecking">
+        <span>⏳ 正在检测运行环境...</span>
+      </template>
+      <template v-else-if="env && env.allOk">
+        <span class="env-ok">✅ 环境就绪</span>
+        <span class="env-item">ffmpeg {{ env.ffmpeg.version }}</span>
+        <span class="env-item">python {{ env.python.version }}</span>
+        <span class="env-item">opencv {{ env.opencv.version }}</span>
+        <button class="env-recheck" @click="checkEnv(true)" title="重新检测">🔄</button>
+      </template>
+      <template v-else-if="env">
+        <span class="env-warn">⚠️ 环境异常</span>
+        <span v-for="(item, key) in envFailures" :key="key" class="env-fail">❌ {{ item.label }}: {{ item.error }}</span>
+        <button class="env-recheck" @click="checkEnv(true)">🔄 重新检测</button>
+      </template>
+    </div>
+
+    <!-- ============================================ -->
+    <!-- 标签页 1: 扫描剪辑 -->
+    <!-- ============================================ -->
+    <main v-show="activeTab === 'scan'" class="tab-content">
+
+      <!-- 素材目录 -->
+      <div class="card">
+        <h2>📁 素材目录</h2>
+        <div class="dir-picker">
+          <input type="text" v-model="materialDir" placeholder="粘贴路径或点击浏览，例如: C:\...\03-素材\20260713-20260726" class="input-full" @keydown.enter="validateMaterialDir">
+          <button @click="openDirBrowser('material')" class="btn btn-outline" :disabled="dirPickerBusy">{{ dirPickerBusy && dirPickerTarget === 'material' ? '选择中...' : '浏览...' }}</button>
+        </div>
+        <p v-if="materialDirError" class="error-msg" style="margin-top:6px">{{ materialDirError }}</p>
+      </div>
+
+      <!-- 加载已有镜头脚本 -->
+      <div class="card">
+        <h2>📋 或加载已有镜头脚本</h2>
+        <div class="load-row">
+          <button class="btn btn-outline" @click="openLoadDialog">选择镜头脚本...</button>
+          <span v-if="loadState.message" class="load-msg" :class="loadState.type">{{ loadState.message }}</span>
+        </div>
+      </div>
+
+      <!-- 视频列表 -->
+      <div class="card" v-if="state.videos.length > 0">
+        <div class="list-header">
+          <h2>📊 处理进度</h2>
+          <div class="progress-header-meta">
+            <span v-if="state.timer">⏱ {{ fmtTimer(state.timer) }}</span>
+            <strong>{{ overallPct }}%</strong>
+          </div>
+        </div>
+        <div class="progress-bar" v-if="state.running">
+          <div class="progress-fill" :style="{ width: overallPct + '%' }"></div>
+        </div>
+        <p class="progress-label" v-if="state.progress.detail || state.stepMsg">{{ state.progress.detail || state.stepMsg }}</p>
+        <p class="progress-eta" v-if="state.running">⏳ {{ etaText }}</p>
+
+        <div class="video-table-wrap">
+          <table class="video-table">
+            <thead>
+              <tr>
+                <th class="col-idx">#</th>
+                <th>视频文件</th>
+                <th class="col-stat">扫描</th>
+                <th class="col-stat">裁剪</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="v in state.videos" :key="v.index"
+                  :class="{ 'row-active': v.scanStatus === 'scanning' || v.clipStatus === 'clipping' }">
+                <td>{{ v.index + 1 }}</td>
+                <td class="col-name">{{ v.name }}</td>
+                <td>
+                  <span v-if="v.scanStatus === 'pending'" class="stat-pending">等待</span>
+                  <span v-else-if="v.scanStatus === 'scanning'" class="stat-running">扫描中...</span>
+                  <span v-else-if="v.scanStatus === 'scanned'" class="stat-ok">✅ {{ v.kills }}次击杀</span>
+                  <span v-else-if="v.scanStatus === 'skipped'" class="stat-dim">⏭ 无击杀</span>
+                  <span v-else class="stat-err">❌</span>
+                </td>
+                <td>
+                  <span v-if="v.kills === 0" class="stat-dim">—</span>
+                  <span v-else-if="v.clipStatus === 'pending'" class="stat-pending">等待</span>
+                  <span v-else-if="v.clipStatus === 'clipping'" class="stat-running">裁剪中...</span>
+                  <span v-else-if="v.clipStatus === 'done'" class="stat-ok">✅ {{ v.clipSize }}MB</span>
+                  <span v-else-if="v.clipStatus === 'skipped'" class="stat-dim">⏭ 跳过</span>
+                  <span v-else class="stat-err">❌</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- 完成信息 -->
+      <div class="card" v-if="output.exists">
+        <h2>✅ 完成</h2>
+        <p>集锦视频: <code>{{ output.name }}</code></p>
+        <p>文件大小: {{ output.sizeMB }} MB</p>
+      </div>
+
+      <div class="action-row">
+        <button v-if="!state.running" class="btn btn-primary btn-large"
+                @click="startScan" :disabled="!materialDir">
+          🚀 开始自动剪辑
+        </button>
+        <button v-if="state.running" class="btn btn-danger btn-large" @click="stopScan">
+          ⏹ 停止
+        </button>
+      </div>
+    </main>
+
+    <!-- ============================================ -->
+    <!-- 标签页 2: 镜头编辑 -->
+    <!-- ============================================ -->
+    <main v-show="activeTab === 'edit'" class="tab-content">
+      <div class="toolbar">
+        <button class="btn btn-outline" @click="openLoadDialog">📋 加载镜头脚本</button>
+        <button class="btn btn-outline" @click="saveShotlog" :disabled="!shotlog || state.running">💾 保存修改</button>
+        <button class="btn btn-primary" @click="reclip" :disabled="!shotlog || state.running">🔄 重新生成集锦</button>
+        <span v-if="shotlog" class="info">{{ shotlog.totalClips }} 个片段 | 前{{ shotlog.config?.beforeSeconds || 5 }}s / 后{{ shotlog.config?.afterSeconds || 2 }}s</span>
+        <span v-if="state.running && activeTab === 'edit'" class="info timer-info">⏱ {{ fmtTimer(state.timer) }}</span>
+      </div>
+
+      <div class="card" v-if="state.running && activeTab === 'edit'">
+        <div class="list-header">
+          <h2>📊 {{ state.stepMsg || '处理中...' }}</h2>
+          <div class="progress-header-meta">
+            <span v-if="state.timer">⏱ {{ fmtTimer(state.timer) }}</span>
+            <strong>{{ reclipPct }}%</strong>
+          </div>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" :style="{ width: reclipPct + '%' }"></div></div>
+        <p class="progress-label" v-if="state.progress.detail">{{ state.progress.detail }}</p>
+        <p class="progress-eta">⏳ {{ etaText }}</p>
+        <div class="video-table-wrap" v-if="reclipVideos.length">
+          <table class="video-table">
+            <thead><tr><th class="col-idx">#</th><th>片段</th><th class="col-stat">状态</th></tr></thead>
+            <tbody>
+              <tr v-for="v in reclipVideos" :key="v.index">
+                <td>{{ v.index + 1 }}</td>
+                <td class="col-name">{{ v.name }}</td>
+                <td>
+                  <span v-if="v.status === 'pending'" class="stat-pending">等待</span>
+                  <span v-else-if="v.status === 'clipping'" class="stat-running">裁剪中...</span>
+                  <span v-else-if="v.status === 'done'" class="stat-ok">✅ 完成</span>
+                  <span v-else class="stat-err">❌</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div v-if="!shotlog && !loadingShotlog" class="card empty-state">
+        <p>还没有镜头日志。请点击"加载镜头脚本"或在「扫描剪辑」标签页完成一次扫描。</p>
+      </div>
+
+      <div v-if="loadingShotlog" class="card"><p>⏳ 加载中...</p></div>
+
+      <!-- 片段列表 -->
+      <div v-if="shotlog" class="clip-list">
+        <div v-for="(clip, ci) in shotlog.clips" :key="ci" class="clip-card"
+             :class="{ 'clip-missing': clip._missing, 'clip-nokill': clip.noKill && clip.clipEnd === 0 }">
+          <div class="clip-order">
+            <button @click="moveClip(ci, -1)" :disabled="ci === 0" title="上移">↑</button>
+            <button @click="moveClip(ci, 1)" :disabled="ci === shotlog.clips.length - 1" title="下移">↓</button>
+          </div>
+
+          <div class="clip-thumb">
+            <img v-if="clip.framesrc" :src="clip.framesrc" @error="clip.framesrc=''" />
+            <span v-else-if="clip._missing" class="thumb-placeholder">⚠️ 素材缺失</span>
+            <span v-else-if="clip.noKill && clip.clipEnd === 0" class="thumb-placeholder">⚪ 无击杀</span>
+            <span v-else class="thumb-placeholder">加载中...</span>
+          </div>
+
+          <div class="clip-info">
+            <div class="clip-source">
+              {{ clip.sourceFile }}
+              <span v-if="clip._missing" class="missing-tag">⚠️ 素材缺失</span>
+              <span v-if="clip.noKill" class="nokill-tag">⚪ 无击杀</span>
+              <span v-if="clip.videoDuration" class="video-dur-tag">视频时长 {{ clip.videoDuration }}s</span>
+            </div>
+            <div class="clip-row">
+              <label>裁剪范围</label>
+              <div class="time-range">
+                <input type="number" v-model.number="clip.clipStart" step="0.1" min="0" class="input-time" @change="validateClip(ci)">
+                <span>~</span>
+                <input type="number" v-model.number="clip.clipEnd" step="0.1" min="0" class="input-time" @change="validateClip(ci)">
+                <span class="unit">秒 ({{ (clip.clipEnd - clip.clipStart).toFixed(1) }}s)</span>
+                <span v-if="clip._errors" class="error-msg">{{ clip._errors }}</span>
+              </div>
+            </div>
+            <div class="clip-row">
+              <label>击杀时刻</label>
+              <div class="kill-times">
+                <span v-for="(kt, ki) in clip.killTimes" :key="ki" class="kill-tag">
+                  <input type="number" v-model.number="clip.killTimes[ki]" step="0.01" min="0" class="input-kill" @change="validateClip(ci)">
+                  <button class="btn-del" @click="clip.killTimes.splice(ki, 1); validateClip(ci)" :disabled="clip.killTimes.length <= 1">×</button>
+                </span>
+                <button class="btn-add" @click="addKillTime(ci)">+ 添加</button>
+              </div>
+            </div>
+            <div class="clip-meta">置信度: {{ clip.maxConfidence }} | 合并击杀: {{ clip.mergedFrom }} 次</div>
+          </div>
+
+          <button class="btn-delete-clip" @click="deleteClip(ci)" title="删除此片段">🗑</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- ============================================ -->
+    <!-- 标签页 3: 音频 -->
+    <!-- ============================================ -->
+    <main v-show="activeTab === 'audio'" class="tab-content">
+      <div class="card">
+        <h2>🎵 背景音乐</h2>
+        <label class="checkbox-label" style="margin-bottom:12px">
+          <input type="checkbox" v-model="audioSettings.enabled"> 启用背景音乐（合成时混入）
+        </label>
+
+        <div v-if="audioSettings.enabled" class="audio-controls">
+          <div class="audio-row">
+            <label>音乐文件:</label>
+            <div class="dir-picker">
+              <span class="dir-readonly" :class="{ empty: !audioSettings.fileName }">{{ audioSettings.fileName || '未选择' }}</span>
+              <button class="btn btn-outline btn-sm" @click="triggerMusicInput">选择...</button>
+            </div>
+            <input type="file" ref="musicInput" accept="audio/*" style="display:none" @change="onMusicSelect">
+          </div>
+
+          <div class="audio-row">
+            <label>原视频音量:</label>
+            <div class="audio-slider">
+              <input type="range" v-model.number="audioSettings.originalDb" min="-30" max="10" step="1">
+              <span class="db-value">{{ audioSettings.originalDb }} dB</span>
+            </div>
+          </div>
+
+          <div class="audio-row">
+            <label>音乐音量:</label>
+            <div class="audio-slider">
+              <input type="range" v-model.number="audioSettings.musicDb" min="-30" max="10" step="1">
+              <span class="db-value">{{ audioSettings.musicDb }} dB</span>
+            </div>
+          </div>
+
+          <p class="hint">💡 音乐将循环播放，在视频结尾自动 2 秒淡出。建议音乐音量设为 -10 ~ -15 dB 以免盖过游戏音效。</p>
+        </div>
+      </div>
+    </main>
+
+    <!-- ============================================ -->
+    <!-- 标签页 4: 预览 -->
+    <!-- ============================================ -->
+    <main v-show="activeTab === 'preview'" class="tab-content">
+      <div class="card empty-state">
+        <p>🎬 集锦预览功能将在后续版本实现。</p>
+        <p v-if="output.exists" class="hint">成品文件: <code>{{ output.path }}</code></p>
+        <button v-if="output.exists" class="btn btn-outline" @click="openFolder" style="margin-top:12px">📂 打开文件夹</button>
+      </div>
+    </main>
+
+  <!-- ============================================ -->
+  <!-- 加载镜头脚本对话框 (放在 #app 内末尾) -->
+  <!-- ============================================ -->
+  <div v-if="showLoadDialog" class="modal-mask" @click.self="showLoadDialog = false">
+    <div class="modal modal-load">
+      <h3>📋 加载镜头脚本</h3>
+
+      <!-- 拖拽上传区域 -->
+      <div class="drop-zone"
+           :class="{ 'drag-over': dragOver }"
+           @click.stop="triggerFileInput"
+           @dragover.prevent="dragOver = true"
+           @dragleave.prevent="dragOver = false"
+           @drop.prevent="onFileDrop">
+        <p v-if="!dragOver">拖拽 shotlog.json 文件到此处，或点击选择文件</p>
+        <p v-else>释放以加载文件</p>
+      </div>
+      <input type="file" ref="fileInput" accept=".json" style="display:none" @change="onFileSelect">
+
+      <!-- 分隔线 -->
+      <div class="divider"><span>或手动输入路径</span></div>
+
+      <!-- 路径输入 -->
+      <label>镜头脚本路径:</label>
+      <input type="text" v-model="loadState.shotlogPath" placeholder="例如: C:\...\04-剪辑工作区域\shotlog-xxx.json" class="input-full">
+
+      <p class="hint" v-if="loadState.needDir" style="color:var(--warning)">⚠️ 该脚本未记录素材目录，请手动指定:</p>
+      <p class="hint" v-if="loadState.missingDir" style="color:var(--error)">⚠️ {{ loadState.missingDirMsg }}</p>
+      <div v-if="loadState.needDir || loadState.missingDir">
+        <label>素材目录:</label>
+        <div class="dir-picker">
+          <input type="text" v-model="loadState.materialDir" placeholder="粘贴素材文件夹路径" class="input-full">
+          <button class="btn btn-outline btn-sm" @click="openDirBrowser('loadMaterial')" :disabled="dirPickerBusy">{{ dirPickerBusy && dirPickerTarget === 'loadMaterial' ? '选择中...' : '浏览...' }}</button>
+        </div>
+      </div>
+
+      <p v-if="loadState.statusMsg" class="load-msg" :class="loadState.statusType">{{ loadState.statusMsg }}</p>
+
+      <div class="modal-btns">
+        <button class="btn btn-primary" @click="doLoadShotlog" :disabled="!canLoad">加载</button>
+        <button class="btn btn-outline" @click="showLoadDialog = false">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 统一目录浏览器对话框 -->
+  <div v-if="showDirBrowser" class="modal-mask" @click.self="showDirBrowser = false">
+    <div class="modal modal-dir">
+      <h3>📁 {{ dirBrowserTitle }}</h3>
+      <div class="dir-nav">
+        <button class="btn btn-outline btn-sm" @click="browseDir(dirBrowser.parent)" :disabled="!dirBrowser.parent">⬆ 上级</button>
+        <input type="text" v-model="dirBrowser.pathInput" class="input-full dir-path-input"
+               @keydown.enter="gotoDir" placeholder="粘贴路径后回车跳转">
+        <button class="btn btn-outline btn-sm" @click="gotoDir">前往</button>
+      </div>
+      <div class="dir-list" v-if="!dirBrowser.loading">
+        <div v-if="dirBrowser.dirs.length === 0 && dirBrowser.files.length === 0" class="empty-state" style="padding:20px">此目录为空</div>
+        <div v-for="d in dirBrowser.dirs" :key="d.path" class="dir-item" @click="browseDir(d.path)">
+          📁 {{ d.name }}
+        </div>
+        <div class="dir-files-section" v-if="dirBrowser.files.length > 0">
+          <div class="dir-files-header">文件 ({{ dirBrowser.files.length }})</div>
+          <div v-for="f in dirBrowser.files" :key="f.name" class="dir-file-item">
+            📄 {{ f.name }} <span class="file-size">{{ fmtSize(f.size) }}</span>
+          </div>
+        </div>
+      </div>
+      <p v-if="dirBrowser.hasMp4" class="hint" style="color:var(--success)">✅ 此目录包含 {{ dirBrowser.mp4Count }} 个 .mp4 文件</p>
+      <p v-if="dirBrowser.loading">⏳ 加载中...</p>
+      <div class="modal-btns">
+        <button class="btn btn-primary" @click="confirmDirBrowser">选择此目录</button>
+        <button class="btn btn-outline" @click="showDirBrowser = false">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 输出设置对话框 -->
+  <div v-if="showOutputDialog" class="modal-mask" @click.self="showOutputDialog = false">
+    <div class="modal modal-dir">
+      <h3>⚙️ 输出设置</h3>
+      <label>文件名:</label>
+      <input type="text" v-model="outputSettings.name" class="input-full" placeholder="highlight.mp4">
+      <label>输出目录:</label>
+      <div class="dir-picker">
+        <input type="text" v-model="outputSettings.dir" class="input-full" placeholder="粘贴输出目录路径">
+        <button class="btn btn-outline btn-sm" @click="openDirBrowser('output')" :disabled="dirPickerBusy">{{ dirPickerBusy && dirPickerTarget === 'output' ? '选择中...' : '浏览...' }}</button>
+      </div>
+      <label>输出清晰度:</label>
+      <div class="radio-group">
+        <label class="radio-label">
+          <input type="radio" v-model="outputSettings.quality" value="original"> 原始画质（默认，保持原分辨率导出）
+        </label>
+        <label class="radio-label">
+          <input type="radio" v-model="outputSettings.quality" value="original-fast"> 原画加速（p3 单通道，最快，画质略降）
+        </label>
+        <label class="radio-label">
+          <input type="radio" v-model="outputSettings.quality" value="360p"> 360P 预览（快速生成，仅用于筛选镜头）
+        </label>
+      </div>
+      <label class="checkbox-label">
+        <input type="checkbox" v-model="outputSettings.compat"> 兼容模式（逐个裁剪+拼接，速度较慢）
+      </label>
+      <p class="hint">⚠️ 不勾选将使用高效直出模式（单次编码，速度快约 50%）</p>
+      <p class="hint" v-if="performanceInfo && performanceInfo.ready">⚡ 设备自适应: {{ performanceInfo.encoderLabel }}，资源档位 {{ resourceButtonLabel }}，扫描 {{ performanceInfo.scanWorkers }} 路并行。4K 原画预估约 {{ performanceInfo.estimated4kFps }} fps，原画加速约 {{ performanceInfo.estimated4kFastFps }} fps。</p>
+      <p class="hint">✅ 公开发布兼容格式：统一输出 H.264 / AVC + AAC、yuv420p 和 faststart，不使用 HEVC；程序会自动选择 NVENC、Quick Sync、AMF 或 CPU x264。</p>
+      <p class="hint">⚡ 扫描会自动只解码击杀识别区域；编码器、扫描并行量、线程和码率上限会按当前设备实测结果自动配置。</p>
+      <p class="hint">击杀间隔超过 15 秒时会拆成独立片段，避免把长时间无击杀画面编进成品。</p>
+      <div class="modal-btns">
+        <button class="btn btn-primary" @click="confirmOutput">确认并开始</button>
+        <button class="btn btn-outline" @click="showOutputDialog = false">取消</button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- 资源上限对话框 -->
+  <div v-if="showResourceDialog" class="modal-mask" @click.self="showResourceDialog = false">
+    <div class="modal modal-resource">
+      <h3>🎛 资源上限</h3>
+      <p class="hint">自动模式会按 CPU 核数、内存、硬盘速度、显卡和编码器实测结果分配合适的占用率。</p>
+
+      <div class="resource-modes">
+        <button v-for="m in resourceModes" :key="m.id"
+                class="resource-mode" :class="{ active: resourceDraft.mode === m.id }"
+                @click="selectResourceMode(m.id)">
+          <strong>{{ m.label }}</strong>
+          <span>{{ m.description }}</span>
+        </button>
+      </div>
+
+      <div class="resource-slider-row">
+        <label>CPU 上限</label>
+        <input type="range" min="20" max="100" step="5" v-model.number="resourceDraft.cpuPercent" @input="markResourceCustom">
+        <span>{{ resourceDraft.cpuPercent }}%</span>
+      </div>
+      <div class="resource-slider-row">
+        <label>GPU 上限</label>
+        <input type="range" min="20" max="100" step="5" v-model.number="resourceDraft.gpuPercent" @input="markResourceCustom">
+        <span>{{ resourceDraft.gpuPercent }}%</span>
+      </div>
+
+      <div class="resource-effective" v-if="resourceInfo">
+        <span>当前生效</span>
+        <strong>扫描 {{ resourceInfo.effective.scanWorkers }} 路</strong>
+        <strong>扫描线程 {{ resourceInfo.effective.scanThreadsPerProcess || '自动' }}/进程</strong>
+        <strong>编码并发 {{ resourceInfo.effective.encodeConcurrency }}</strong>
+        <strong>编码线程 {{ resourceInfo.effective.encoderThreads || '自动' }}</strong>
+      </div>
+      <p class="hint">GPU 单会话会自动跑满视频编码引擎；“满性能”档才允许硬件多会话并行。任务运行期间不能修改。</p>
+      <p v-if="resourceSaveMsg" class="load-msg" :class="resourceSaveType">{{ resourceSaveMsg }}</p>
+
+      <div class="modal-btns">
+        <button class="btn btn-primary" @click="saveResourceSettings">保存设置</button>
+        <button class="btn btn-outline" @click="showResourceDialog = false">取消</button>
+      </div>
+    </div>
+  </div>
+
+  </div>  <!-- #app -->
+
+  <script src="vue.global.prod.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

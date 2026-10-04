@@ -1,0 +1,7 @@
+{
+  "ffmpegPath": "ffmpeg",
+  "pythonPath": "python",
+  "outputDir": "./output",
+  "materialDir": "",
+  "port": 3456
+}

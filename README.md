@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/33020184/README.md)
 # Delta Highlight
 
 自动识别《三角洲行动》录像中的本人击杀提示，并使用 ffmpeg 生成可公开播放的精彩集锦。

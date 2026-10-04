@@ -1,0 +1,21 @@
+{
+  "name": "delta-highlight",
+  "version": "2.0.8",
+  "description": "三角洲行动精彩镜头自动剪辑工具 - 视频击杀UI检测",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "keywords": [
+    "video",
+    "highlight",
+    "auto-clip",
+    "ffmpeg",
+    "opencv",
+    "delta-force"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
