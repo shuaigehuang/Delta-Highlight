@@ -608,7 +608,13 @@ const outputSettings = reactive({ name: '', dir: '', compat: false, quality: 'or
       eventSource.addEventListener('video-scan-done', e => {
         const d = JSON.parse(e.data);
         const v = state.videos[d.index];
-        if (v) { v.scanStatus = d.kills > 0 ? 'scanned' : 'skipped'; v.kills = d.kills || 0; }
+        if (v) {
+          const highlights = d.highlights ?? d.kills ?? 0;
+          v.scanStatus = highlights > 0 ? 'scanned' : 'skipped';
+          v.kills = highlights;
+          v.killEvents = d.kills || 0;
+          v.rescues = d.rescues || 0;
+        }
       });
 
       eventSource.addEventListener('video-skip', e => {
@@ -788,10 +794,32 @@ const outputSettings = reactive({ name: '', dir: '', compat: false, quality: 'or
       }
     }
 
+    function eventTypeAt(clip, index) {
+      return clip.eventTypes && clip.eventTypes[index] ? clip.eventTypes[index] : 'kill';
+    }
+
+    function eventLabel(clip, index) {
+      const type = eventTypeAt(clip, index);
+      return type === 'rescue' ? '救援' : (type === 'manual' ? '手动' : '击杀');
+    }
+
+    function eventClass(clip, index) {
+      return 'event-' + eventTypeAt(clip, index);
+    }
+
     function addKillTime(ci) {
       const clip = shotlog.value.clips[ci];
       const last = clip.killTimes.length > 0 ? clip.killTimes[clip.killTimes.length - 1] : clip.clipStart;
       clip.killTimes.push(Math.round((last + 1) * 100) / 100);
+      if (!clip.eventTypes) clip.eventTypes = [];
+      clip.eventTypes.push('manual');
+    }
+
+    function removeEvent(ci, ki) {
+      const clip = shotlog.value.clips[ci];
+      clip.killTimes.splice(ki, 1);
+      if (clip.eventTypes) clip.eventTypes.splice(ki, 1);
+      validateClip(ci);
     }
 
     function validateClip(ci) {
@@ -805,9 +833,12 @@ const outputSettings = reactive({ name: '', dir: '', compat: false, quality: 'or
       if (clip.clipStart >= clip.clipEnd) errors.push('开始 < 结束');
       if (clip.clipStart < 0) errors.push('不能为负');
       for (const kt of clip.killTimes) {
-        if (kt < clip.clipStart || kt > clip.clipEnd) { errors.push(`击杀 ${kt}s 超出范围`); break; }
+        if (kt < clip.clipStart || kt > clip.clipEnd) { errors.push(`高光 ${kt}s 超出范围`); break; }
       }
-      clip.killTimes.sort((a, b) => a - b);
+      const eventPairs = clip.killTimes.map((time, index) => ({ time, type: eventTypeAt(clip, index) }));
+      eventPairs.sort((a, b) => a.time - b.time);
+      clip.killTimes = eventPairs.map(item => item.time);
+      clip.eventTypes = eventPairs.map(item => item.type);
       clip._errors = errors.join('; ');
     }
 
@@ -945,7 +976,7 @@ const outputSettings = reactive({ name: '', dir: '', compat: false, quality: 'or
       triggerMusicInput, onMusicSelect,
       startScan, confirmOutput, stopScan, openFolder,
       openLoadDialog, triggerFileInput, onFileDrop, onFileSelect, doLoadShotlog,
-      saveShotlog, reclip, addKillTime, validateClip, deleteClip, moveClip
+      saveShotlog, reclip, addKillTime, eventLabel, eventClass, removeEvent, validateClip, deleteClip, moveClip
     };
   }
 }).mount('#app');

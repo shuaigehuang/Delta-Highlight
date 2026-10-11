@@ -396,3 +396,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
   .resource-btn { margin-left: 0; width: 100%; justify-content: center; }
   .resource-slider-row { grid-template-columns: 64px 1fr 44px; gap: 6px; }
 }
+.event-kind { font-size: 10px; line-height: 1.4; padding: 1px 4px; border-radius: 4px; font-weight: 600; }
+.event-kill { color: var(--error); background: rgba(224,85,106,0.14); }
+.event-rescue { color: var(--success); background: rgba(76,175,132,0.16); }
+.event-manual { color: var(--accent); background: rgba(91,141,239,0.14); }

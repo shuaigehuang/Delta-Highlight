@@ -1,22 +1,29 @@
 # Delta Highlight
 
-自动识别《三角洲行动》录像中的本人击杀提示，并使用 ffmpeg 生成可公开播放的精彩集锦。
+自动识别《三角洲行动》录像中的本人击杀与救援提示，并使用 ffmpeg 生成可公开播放的精彩集锦。
 
-![Version](https://img.shields.io/badge/version-2.0.8-2563eb)
+![Version](https://img.shields.io/badge/version-2.0.9-2563eb)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-4f46e5)
 ![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-> 当前版本重点识别玩家本人击杀时出现在画面中央偏下的白色骷髅提示，不扫描右上角全局击杀栏。
+> 当前版本识别玩家本人击杀提示和救援标志，不扫描右上角全局击杀栏。
 
 ## 项目简介
 
-Delta Highlight 面向长时间、高码率的游戏录像。它不依赖视频剪辑软件逐帧操作，而是通过 OpenCV 模板匹配自动定位击杀时刻，再调用 ffmpeg 裁剪、拼接和导出成片。
+Delta Highlight 面向长时间、高码率的游戏录像。它不依赖视频剪辑软件逐帧操作，而是通过 OpenCV 模板匹配自动定位击杀与救援时刻，再调用 ffmpeg 裁剪、拼接和导出成片。
 
 程序提供本地 Web 界面，可在浏览器中完成素材选择、进度查看、镜头编辑、音频混入和成品导出。Windows 发布版已经内置 Node.js、Python、OpenCV、NumPy、ffmpeg 和 ffprobe，用户不需要手动配置运行环境。
 
 维护者 B 站主页：<https://space.bilibili.com/471298311>
+
+## v2.0.9 更新重点
+
+- 救援模板已替换为新的实机截图版本，经过背景清理、降噪、边缘保留和 Lanczos 放大处理。
+- 救援检测扩大到中央区域的多档模板尺寸，适配不同分辨率、画面比例和 UI 缩放。
+- 救援事件同时校验状态框进度条与“正在救援/救援中”文字前缀，减少同形图标和其他进度条误报。
+- 白色击杀、载具击杀、精准击杀和救援四种模板仍全部参与高光识别与剪辑。
 
 ## 原作者与来源
 
@@ -27,12 +34,14 @@ Delta Highlight 面向长时间、高码率的游戏录像。它不依赖视频�
 
 ## 功能特性
 
-- 自动扫描录像并识别本人白色骷髅击杀提示。
-- 只检查画面中央偏下区域，忽略右上角全局击杀信息。
+- 自动扫描录像并识别四种原始模板：白色击杀、载具击杀、精准击杀和救援标志。
+- 四种模板命中的事件都会生成高光时间点并进入剪辑片段。
+- 击杀检查画面中央偏下区域，救援标志检查画面中央区域，并忽略右上角全局击杀信息。
 - 支持多个模板尺寸和横向位置变化，适配 1080P、2K、4K 和常见宽屏比例。
-- 按击杀时间自动裁剪片段，默认保留击杀前约 5 秒、击杀后约 2 秒。
-- 自动合并同一视频中的连续击杀，生成可编辑的镜头脚本。
+- 按高光时间自动裁剪片段，默认保留事件前约 5 秒、事件后约 2 秒。
+- 自动合并同一视频中的连续高光事件，生成可编辑的镜头脚本。
 - 提供网页操作界面、任务进度、当前阶段和预计剩余时间。
+- 长视频分片扫描按各分片的真实处理量汇总进度，预计完成时间不再因分片起点而虚高。
 - 支持帧缩略图预览、裁剪范围调整、镜头增删和重新导出。
 - 支持背景音乐循环播放、结尾淡出和独立音量控制。
 - 自动检测 NVIDIA NVENC、Intel Quick Sync、AMD AMF 和 CPU x264。
@@ -44,7 +53,7 @@ Delta Highlight 面向长时间、高码率的游戏录像。它不依赖视频�
 
 ```mermaid
 flowchart LR
-    A[选择录像目录] --> B[OpenCV 扫描击杀提示]
+    A[选择录像目录] --> B[OpenCV 扫描击杀与救援提示]
     B --> C[生成镜头脚本]
     C --> D[编辑或确认镜头]
     D --> E[ffmpeg 裁剪与拼接]
@@ -55,10 +64,10 @@ flowchart LR
 
 1. 扫描素材目录中的视频文件。
 2. 每隔约 0.2 秒读取一帧，只解码画面中央偏下的识别区域。
-3. 使用项目原始模板匹配白色骷髅击杀提示。
-4. 过滤右上角全局击杀栏、橙色载具击杀和精确击杀模板。
-5. 合并短时间内位置相近的重复检测，得到击杀时间点。
-6. 根据击杀时间生成镜头脚本。
+3. 使用项目原始模板匹配白色击杀、载具击杀、精准击杀和救援标志。
+4. 四种模板分别在对应区域匹配，命中事件全部进入剪辑流程。
+5. 合并短时间内位置相近的同类重复检测，得到高光时间点。
+6. 根据击杀和救援时间生成镜头脚本。
 7. 自动选择本机可用的最佳 H.264 编码器。
 8. 使用 ffmpeg 裁剪、拼接并导出最终视频。
 9. 使用 ffprobe 验证输出视频流，确认编码格式正确。
@@ -70,7 +79,7 @@ flowchart LR
 前往 [GitHub Releases](../../releases/latest) 下载最新的单文件安装程序：
 
 ```text
-DeltaHighlight-Windows-Installer-v2.0.8.exe
+DeltaHighlight-Windows-Installer-v2.0.9.exe
 ```
 
 安装步骤：
@@ -200,7 +209,7 @@ http://localhost:3456
 .
 ├── src/
 │   ├── server.js                  Web API、任务调度和剪辑流程
-│   ├── scan_video_only.py         击杀提示扫描与模板匹配
+│   ├── scan_video_only.py         击杀与救援提示扫描、模板匹配
 │   └── lib/
 │       ├── clipper.js             视频片段裁剪
 │       ├── concat.js              视频片段拼接与导出
@@ -212,8 +221,10 @@ http://localhost:3456
 │       ├── resource-manager.js    自适应资源分配
 │       └── shotlog.js             镜头脚本生成与合并
 ├── web/                           本地 Web 操作界面
-├── templates/                     击杀提示匹配模板
+├── templates/                     击杀与救援提示匹配模板
+├── windows/                       Windows 托盘、安装器和卸载器源码
 ├── docs/                          开发和需求记录
+├── BUILDING.md                    开发和 Windows 构建说明
 └── config.example.json
 ```
 
@@ -263,11 +274,11 @@ node src/server.js
 
 ## 常见问题
 
-### 扫描不到击杀
+### 扫描不到高光事件
 
-- 确认识别的是玩家本人击杀时画面中央偏下的白色骷髅提示。
-- 当前版本不会把右上角全局击杀栏当作本人击杀。
-- 不要使用视频截图替换 `templates/01-kill-white.png`，应使用项目原始模板。
+- 确认识别的是玩家本人击杀提示或救援标志。
+- 击杀提示应在画面中央偏下，救援标志应在画面中央；右上角全局击杀栏不会被当作本人击杀。
+- 不要用随机视频截图替换模板；四种模板分别为 `01-kill-white.png`、`02-vehicle-orange.png`、`03-precise-kill-orange.png`、`04-rescue-white.png`。
 - 如果游戏 UI 缩放、分辨率或显示比例发生变化，请提交录像片段和游戏设置用于复现。
 
 ### 提示找不到 ffmpeg 或 Python

@@ -1,7 +1,7 @@
 {
   "name": "delta-highlight",
-  "version": "2.0.8",
-  "description": "三角洲行动精彩镜头自动剪辑工具 - 视频击杀UI检测",
+  "version": "2.0.9",
+  "description": "三角洲行动精彩镜头自动剪辑工具 - 四种高光模板检测",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js"

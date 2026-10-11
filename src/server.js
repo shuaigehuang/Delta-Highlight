@@ -195,7 +195,7 @@ function runCheck(cmd, args, versionRegex) {
  */
 function checkTemplates() {
   const tplDir = path.resolve(__dirname, '..', 'templates');
-  const expected = ['01-kill-white.png', '02-vehicle-orange.png', '03-precise-kill-orange.png'];
+  const expected = ['01-kill-white.png', '02-vehicle-orange.png', '03-precise-kill-orange.png', '04-rescue-white.png'];
   const found = expected.filter(f => fs.existsSync(path.join(tplDir, f)));
   if (found.length === expected.length) {
     return { ok: true, count: found.length };
@@ -470,6 +470,7 @@ app.post('/api/scan', async (req, res) => {
       scanDuration: 0,
       scanSeconds: 0,
       kills: 0,
+      rescues: 0,
       clipStatus: 'pending',
       clipSize: 0
     }));
@@ -492,14 +493,14 @@ app.post('/api/scan', async (req, res) => {
       detail: '设备自适应: ' + perfSummary.encoderLabel + '，CPU 上限 ' + perfSummary.resource.cpuPercent + '%，扫描 ' + state.scanWorkers + ' 路并行，画质 ' + (state.quality === '360p' ? '360P 预览' : (state.quality === 'original-fast' ? '原画加速' : '原画'))
     });
 
-    broadcast('step', { step: 2, total: totalSteps, message: '视频击杀扫描' });
+    broadcast('step', { step: 2, total: totalSteps, message: '视频高光扫描' });
     await runScan(videos);
-    updateTaskProgress({ phase: 'scan', label: '扫描完成', percent: 72, detail: '正在汇总击杀结果...', etaSeconds: 0 });
+    updateTaskProgress({ phase: 'scan', label: '扫描完成', percent: 72, detail: '正在汇总高光结果...', etaSeconds: 0 });
     if (isAborted()) { clearInterval(timer); return; }
 
     // ===== Step 3: 日志 =====
     broadcast('step', { step: 3, total: totalSteps, message: '生成镜头日志' });
-    updateTaskProgress({ phase: 'log', label: '生成镜头日志', percent: 74, detail: '正在整理击杀片段...', etaSeconds: null });
+    updateTaskProgress({ phase: 'log', label: '生成镜头日志', percent: 74, detail: '正在整理高光片段...', etaSeconds: null });
     const scanResultPath = path.join(workSubDir, `scan-result-${batchName}.json`);
     const scanResult = JSON.parse(fs.readFileSync(path.join(state.workDir, `scan-result-${batchName}.json`), 'utf-8'));
     const shotlog = generateShotlog(scanResult, {
@@ -509,7 +510,7 @@ app.post('/api/scan', async (req, res) => {
 
     const totalKills = videos.reduce((s, v) => s + v.kills, 0);
     const videoWithKills = videos.filter(v => v.kills > 0).length;
-    broadcast('progress', { detail: `${shotlog.totalClips} 个片段 (${totalKills} 次击杀 / ${videoWithKills} 个视频)` });
+    broadcast('progress', { detail: `${shotlog.totalClips} 个片段 (${totalKills} 次高光 / ${videoWithKills} 个视频)` });
     updateTaskProgress({ phase: 'log', label: '镜头日志完成', percent: 76, detail: `${shotlog.totalClips} 个片段，准备生成集锦`, etaSeconds: null });
     if (isAborted()) { clearInterval(timer); return; }
 
@@ -572,7 +573,7 @@ app.post('/api/scan', async (req, res) => {
         resetState();
         return;
       }
-      // 标记所有有击杀的视频裁剪状态为 done（实际跳过了裁剪）
+      // 标记所有有高光事件的视频裁剪状态为 done（实际跳过了裁剪）
       for (const v of videos) {
         if (v.kills > 0) v.clipStatus = 'done';
       }
@@ -721,20 +722,26 @@ async function runScan(videos) {
               v.scanSeconds = Math.max(Number(v.scanSeconds) || 0, processedSeconds);
               reportScanProgress();
             } else if ((evt.type === 'video_done' || evt.type === 'video_error') && v) {
+              const highlights = Number(evt.highlight_count ?? evt.kill_count ?? 0);
               const kills = Number(evt.kill_count || 0);
-              v.kills = kills;
-              v.scanStatus = evt.type === 'video_error' ? 'error' : (kills > 0 ? 'scanned' : 'skipped');
+              const rescues = Number(evt.rescue_count || 0);
+              v.kills = highlights;
+              v.killEvents = kills;
+              v.rescues = rescues;
+              v.scanStatus = evt.type === 'video_error' ? 'error' : (highlights > 0 ? 'scanned' : 'skipped');
               v.scanDuration = Number(evt.duration) || v.scanDuration || 0;
               if (v.scanDuration > 0) v.scanSeconds = v.scanDuration;
               reportScanProgress();
               broadcast('video-scan-done', {
                 index: idx,
                 name: v.name,
+                highlights,
                 kills,
+                rescues,
                 cached: !!evt.cached
               });
-              if (kills === 0 && evt.type !== 'video_error') {
-                broadcast('video-skip', { index: idx, name: v.name, reason: '无击杀' });
+              if (highlights === 0 && evt.type !== 'video_error') {
+                broadcast('video-skip', { index: idx, name: v.name, reason: '无高光' });
               }
             }
           } catch (_) {}
@@ -752,8 +759,8 @@ async function runScan(videos) {
           continue;
         }
 
-        // 检测到击杀: N 次
-        m = line.match(/检测到击杀:\s*(\d+)\s*次/);
+        // 检测到高光: N 次
+        m = line.match(/检测到(?:击杀|高光):\s*(\d+)\s*次/);
         if (m) {
           const kills = parseInt(m[1]);
           // 找到最近一个 scanning 状态的视频
@@ -766,14 +773,14 @@ async function runScan(videos) {
           continue;
         }
 
-        // ⚠️ 未检测到击杀UI
-        if (line.includes('未检测到击杀')) {
+        // ⚠️ 未检测到高光事件
+        if (line.includes('未检测到高光事件')) {
           const v = videos.find(v => v.scanStatus === 'scanning');
           if (v) {
             v.scanStatus = 'skipped';
             v.kills = 0;
             broadcast('video-scan-done', { index: v.index, name: v.name, kills: 0 });
-            broadcast('video-skip', { index: v.index, name: v.name, reason: '无击杀' });
+            broadcast('video-skip', { index: v.index, name: v.name, reason: '无高光' });
           }
         }
       }
@@ -804,10 +811,12 @@ async function runScan(videos) {
 
 function buildScanResult(videos) {
   return {
-    config: { roi: 'auto', threshold: 0.7, interval: 0.2, templates: 3 },
+    config: { roi: 'auto', threshold: 0.7, interval: 0.2, templates: 4 },
     scanned_at: new Date().toISOString(),
     total_videos: videos.length,
-    total_kills: videos.reduce((s, v) => s + v.kills, 0),
+    total_kills: videos.reduce((s, v) => s + (v.killEvents || 0), 0),
+    total_rescues: videos.reduce((s, v) => s + (v.rescues || 0), 0),
+    total_highlights: videos.reduce((s, v) => s + v.kills, 0),
     results: videos.filter(v => v.kills > 0).map(v => ({
       video: v.path,
       duration: 30,

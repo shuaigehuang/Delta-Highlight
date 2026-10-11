@@ -110,6 +110,61 @@ function addCandidate(list, candidate) {
   if (!list.includes(resolved)) list.push(resolved);
 }
 
+function parseNumericVersion(value) {
+  const match = String(value || '').match(/^(\d+(?:\.\d+)?)/);
+  return match ? Number(match[1]) : 0;
+}
+
+function listBundledFfmpegPackages() {
+  const runtimeRoot = path.resolve(__dirname, '..', '..', '..', 'runtime');
+  if (!fs.existsSync(runtimeRoot)) return [];
+
+  let entries = [];
+  try {
+    entries = fs.readdirSync(runtimeRoot, { withFileTypes: true });
+  } catch (_) {
+    return [];
+  }
+
+  return entries
+    .filter(entry => entry.isDirectory() && /^ffmpeg(?:-|$)/i.test(entry.name))
+    .map(entry => {
+      const packageDir = path.join(runtimeRoot, entry.name);
+      const ffmpegPath = path.join(packageDir, 'ffmpeg.exe');
+      if (!fs.existsSync(ffmpegPath)) return null;
+
+      let manifest = {};
+      try {
+        manifest = JSON.parse(fs.readFileSync(path.join(packageDir, 'nvenc-manifest.json'), 'utf8'));
+      } catch (_) {}
+
+      return {
+        label: String(manifest.label || entry.name),
+        ffmpegPath,
+        nvencApiLabel: String(manifest.nvencApiVersion || ''),
+        nvencApiVersion: Number(manifest.nvencApiVersion || 0),
+        minimumDriverVersion: parseNumericVersion(manifest.minimumDriverVersion)
+      };
+    })
+    .filter(Boolean);
+}
+
+function orderBundledFfmpegPackages(packages, nvidiaGpu) {
+  const driverVersion = nvidiaGpu && nvidiaGpu.driverVersion ? nvidiaGpu.driverVersion : 0;
+  if (!driverVersion) return packages.slice();
+
+  return packages.slice().sort((a, b) => {
+    const aCompatible = !a.minimumDriverVersion || driverVersion >= a.minimumDriverVersion;
+    const bCompatible = !b.minimumDriverVersion || driverVersion >= b.minimumDriverVersion;
+    if (aCompatible !== bCompatible) return aCompatible ? -1 : 1;
+
+    if (aCompatible && bCompatible) {
+      return b.nvencApiVersion - a.nvencApiVersion;
+    }
+    return a.minimumDriverVersion - b.minimumDriverVersion;
+  });
+}
+
 function addGameFfmpegCandidates(list) {
   const drives = ['C:', 'D:', 'E:', 'F:', 'G:'];
   for (const drive of drives) {
@@ -197,7 +252,7 @@ function buildVideoEncoderArgs(options = {}) {
   return args;
 }
 
-function encoderWorks(ffmpegPath, codec) {
+function encoderWorks(ffmpegPath, codec, options = {}) {
   const args = [
     '-hide_banner',
     '-loglevel', 'error',
@@ -206,7 +261,13 @@ function encoderWorks(ffmpegPath, codec) {
     '-i', 'color=c=black:s=256x256:r=30:d=0.2',
     '-frames:v', '2',
     '-an',
-    ...buildVideoEncoderArgs({ videoCodec: codec, cq: 28, crf: 28, nvencPreset: 'p4' }),
+    ...buildVideoEncoderArgs({
+      videoCodec: codec,
+      cq: 28,
+      crf: 28,
+      nvencPreset: 'p4',
+      ...options
+    }),
     '-f', 'null',
     '-'
   ];
@@ -229,7 +290,7 @@ function candidateExists(candidate) {
 
 function detectNvidiaGpu() {
   try {
-    const result = spawnSync('nvidia-smi', ['--query-gpu=index,name', '--format=csv,noheader,nounits'], {
+    const result = spawnSync('nvidia-smi', ['--query-gpu=index,name,driver_version', '--format=csv,noheader,nounits'], {
       windowsHide: true,
       encoding: 'utf8',
       timeout: 4000
@@ -238,7 +299,13 @@ function detectNvidiaGpu() {
     const first = String(result.stdout || '').split(/\r?\n/).map(function (s) { return s.trim(); }).filter(Boolean)[0];
     if (!first) return null;
     const parts = first.split(',');
-    return { index: Number(parts[0] || 0), name: (parts[1] || 'NVIDIA GPU').trim() };
+    const driver = (parts[2] || '').trim();
+    return {
+      index: Number(parts[0] || 0),
+      name: (parts[1] || 'NVIDIA GPU').trim(),
+      driver,
+      driverVersion: parseNumericVersion(driver)
+    };
   } catch (_) {
     return null;
   }
@@ -250,23 +317,31 @@ function getFfmpegRuntime() {
   const configured = getFfmpegPath();
   const candidates = [];
 
-  // 随包 ffmpeg 永远优先：避免旧 config.json 或系统里的旧安装把新版拖回老编码器。
-  const bundled = path.resolve(__dirname, '..', '..', 'runtime', 'ffmpeg', 'ffmpeg.exe');
-  addCandidate(candidates, bundled);
+  const nvidiaGpu = detectNvidiaGpu();
+  const bundledPackages = orderBundledFfmpegPackages(listBundledFfmpegPackages(), nvidiaGpu);
+  const packageByPath = new Map(bundledPackages.map(item => [path.resolve(item.ffmpegPath), item]));
+
+  // 随包 ffmpeg 永远优先；包内可放多个 NVENC API 版本，按驱动兼容性排序。
+  for (const item of bundledPackages) addCandidate(candidates, item.ffmpegPath);
   addCandidate(candidates, process.env.DF_FFMPEG_PATH);
   addCandidate(candidates, configured);
   addGameFfmpegCandidates(candidates);
 
-  const nvidiaGpu = detectNvidiaGpu();
   let ffmpegPath = candidates.find(candidateExists) || configured;
   let hardware = 'none';
   let videoCodec = 'libx264';
   let encoderLabel = 'CPU x264';
 
-  for (const candidate of candidates) {
-    if (!candidateExists(candidate)) continue;
-    for (const encoder of HARDWARE_ENCODERS) {
-      if (encoderWorks(candidate, encoder.codec)) {
+  // 先横向比较所有 ffmpeg 对 NVENC 的兼容性，再回退 QSV/AMF。
+  // 新版 ffmpeg 可能要求比显卡驱动更新的 NVENC API；如果直接按
+  // ffmpeg 路径顺序探测，会先命中核显，导致独显看起来“没有被识别”。
+  for (const encoder of HARDWARE_ENCODERS) {
+    for (const candidate of candidates) {
+      if (!candidateExists(candidate)) continue;
+      const probeOptions = encoder.kind === 'nvenc' && nvidiaGpu
+        ? { gpu: nvidiaGpu.index }
+        : {};
+      if (encoderWorks(candidate, encoder.codec, probeOptions)) {
         ffmpegPath = candidate;
         hardware = encoder.kind;
         videoCodec = encoder.codec;
@@ -284,7 +359,10 @@ function getFfmpegRuntime() {
     encoderLabel,
     videoCodec,
     gpuIndex: nvidiaGpu ? nvidiaGpu.index : null,
-    gpuName: nvidiaGpu ? nvidiaGpu.name : ''
+    gpuName: nvidiaGpu ? nvidiaGpu.name : '',
+    gpuDriver: nvidiaGpu ? nvidiaGpu.driver : '',
+    ffmpegPackage: (packageByPath.get(path.resolve(ffmpegPath)) || {}).label || '',
+    ffmpegNvencApi: (packageByPath.get(path.resolve(ffmpegPath)) || {}).nvencApiLabel || null
   };
 
   return cachedRuntime;
@@ -376,6 +454,8 @@ async function verifyH264Output(filePath) {
 
 module.exports = {
   getFfmpegRuntime,
+  listBundledFfmpegPackages,
+  orderBundledFfmpegPackages,
   buildVideoEncoderArgs,
   probeMediaInfo,
   verifyH264Output,

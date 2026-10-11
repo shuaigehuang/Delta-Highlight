@@ -35,11 +35,13 @@ function formatFilterNumber(value) {
 }
 
 function buildCompatibilityVideoFilter(height) {
-  const scale = height
-    ? `scale=-2:${Number(height)}:flags=bicubic:in_range=auto:out_range=tv`
-    : 'scale=iw:ih:flags=bicubic:in_range=auto:out_range=tv';
-  return `${scale},setsar=1,format=yuv420p,` +
-    'setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709';
+  const filters = [];
+  if (height) {
+    filters.push(`scale=-2:${Number(height)}:flags=bicubic:in_range=auto:out_range=tv`);
+  }
+  filters.push('setsar=1', 'format=yuv420p');
+  filters.push('setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709');
+  return filters.join(',');
 }
 
 /**

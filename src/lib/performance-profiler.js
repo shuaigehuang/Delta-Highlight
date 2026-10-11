@@ -158,6 +158,21 @@ function getMemoryInfo() {
   };
 }
 
+function getGpuSignature() {
+  const nvidiaSmi = findCommand('nvidia-smi');
+  if (!nvidiaSmi) return '';
+  const result = spawnSync(nvidiaSmi, [
+    '--query-gpu=name,driver_version',
+    '--format=csv,noheader,nounits'
+  ], {
+    windowsHide: true,
+    encoding: 'utf8',
+    timeout: 4000
+  });
+  if (result.status !== 0) return '';
+  return String(result.stdout || '').trim().replace(/\s+/g, ' ');
+}
+
 async function getGpuInfo() {
   const nvidiaSmi = findCommand('nvidia-smi');
   if (nvidiaSmi) {
@@ -356,6 +371,7 @@ function buildPerformanceProfile(system, ffmpeg, benchmarkResults) {
       cpu: system.cpu.model,
       logicalProcessors: system.cpu.logicalProcessors,
       totalMemoryGB: system.memory.totalGB,
+      gpu: getGpuSignature(),
       ffmpegPath: ffmpeg.path,
       ffmpegFingerprint: fileFingerprint(ffmpeg.path)
     },
@@ -382,6 +398,7 @@ function profileSignature(ffmpegPath) {
     cpu: cpu.model,
     logicalProcessors: cpu.logicalProcessors,
     totalMemoryGB: memory.totalGB,
+    gpu: getGpuSignature(),
     ffmpegPath,
     ffmpegFingerprint: fileFingerprint(ffmpegPath)
   };
@@ -497,6 +514,9 @@ function getPerformanceSummary(profile) {
     ffmpegVersion: profile.ffmpeg.version,
     gpuIndex: (function () { try { return getFfmpegRuntime().gpuIndex; } catch (_) { return null; } })(),
     gpuName: (function () { try { return getFfmpegRuntime().gpuName || ''; } catch (_) { return ''; } })(),
+    gpuDriver: (function () { try { return getFfmpegRuntime().gpuDriver || ''; } catch (_) { return ''; } })(),
+    ffmpegPackage: (function () { try { return getFfmpegRuntime().ffmpegPackage || ''; } catch (_) { return ''; } })(),
+    ffmpegNvencApi: (function () { try { return getFfmpegRuntime().ffmpegNvencApi || null; } catch (_) { return null; } })(),
     cpu: profile.system.cpu.model,
     logicalProcessors: profile.system.cpu.logicalProcessors,
     memoryGB: profile.system.memory.totalGB,

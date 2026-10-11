@@ -47,6 +47,7 @@ function generateShotlog(scanResult, config = {}, materialDir = '') {
       clips.push({
         sourceFile,
         killTimes: [],
+        eventTypes: [],
         maxConfidence: 0,
         clipStart: 0,
         clipEnd: 0,
@@ -80,6 +81,7 @@ function generateShotlog(scanResult, config = {}, materialDir = '') {
     for (const group of groups) {
       const timestamps = group.map(k => k.timestamp);
       const confidences = group.map(k => k.confidence);
+      const eventTypes = group.map(k => k.event_type || (String(k.template || '').toLowerCase().includes('rescue') ? 'rescue' : 'kill'));
 
       const firstKill = Math.min(...timestamps);
       const lastKill = Math.max(...timestamps);
@@ -97,6 +99,7 @@ function generateShotlog(scanResult, config = {}, materialDir = '') {
       clips.push({
         sourceFile,
         killTimes: timestamps.map(t => round(t, 3)),
+        eventTypes,
         maxConfidence: round(Math.max(...confidences), 4),
         clipStart: round(clipStart, 3),
         clipEnd: round(clipEnd, 3),
@@ -148,9 +151,12 @@ function printSummary(shotlog) {
 
   for (let i = 0; i < shotlog.clips.length; i++) {
     const c = shotlog.clips[i];
+    const types = c.eventTypes || [];
+    const rescueCount = types.filter(t => t === 'rescue').length;
+    const killCount = Math.max(0, c.killTimes.length - rescueCount);
     const killInfo = c.killTimes.length === 1
-      ? `击杀@${c.killTimes[0]}s`
-      : `${c.killTimes.length}次击杀@${c.killTimes.join('s, ')}s`;
+      ? `${rescueCount === 1 ? '救援' : '击杀'}@${c.killTimes[0]}s`
+      : `${c.killTimes.length}次高光@${c.killTimes.join('s, ')}s (击杀${killCount}/救援${rescueCount})`;
     console.log(`   [${String(i + 1).padStart(2, '0')}] ${c.sourceFile}`);
     console.log(`       ${fmtTime(c.clipStart)} → ${fmtTime(c.clipEnd)}  (${c.duration.toFixed(1)}s)  ${killInfo}`);
   }

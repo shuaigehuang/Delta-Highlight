@@ -22,7 +22,7 @@
     <!-- 环境状态条 -->
     <div class="env-bar" :class="envBarClass">
       <span v-if="performanceInfo && performanceInfo.ready" class="env-perf" :title="performanceInfo.reason || ''">
-        ⚡ v{{ performanceInfo.version || '2.0.8' }} · H.264 / AVC · {{ performanceInfo.encoderLabel }} · {{ Math.round(performanceInfo.encoderFps || 0) }} fps · 扫描 {{ performanceInfo.scanWorkers }} 路并行 · 4K 约 {{ performanceInfo.estimated4kFps }} fps
+        ⚡ v{{ performanceInfo.version || '2.0.9' }} · H.264 / AVC · {{ performanceInfo.encoderLabel }} · {{ Math.round(performanceInfo.encoderFps || 0) }} fps · 扫描 {{ performanceInfo.scanWorkers }} 路并行 · 4K 约 {{ performanceInfo.estimated4kFps }} fps
       </span>
       <span v-else-if="performanceInfo" class="env-perf">
         ⚡ 正在检测设备性能，首次约需数秒...
@@ -106,8 +106,8 @@
                 <td>
                   <span v-if="v.scanStatus === 'pending'" class="stat-pending">等待</span>
                   <span v-else-if="v.scanStatus === 'scanning'" class="stat-running">扫描中...</span>
-                  <span v-else-if="v.scanStatus === 'scanned'" class="stat-ok">✅ {{ v.kills }}次击杀</span>
-                  <span v-else-if="v.scanStatus === 'skipped'" class="stat-dim">⏭ 无击杀</span>
+                  <span v-else-if="v.scanStatus === 'scanned'" class="stat-ok">✅ {{ v.kills }}次高光</span>
+                  <span v-else-if="v.scanStatus === 'skipped'" class="stat-dim">⏭ 无高光</span>
                   <span v-else class="stat-err">❌</span>
                 </td>
                 <td>
@@ -202,7 +202,7 @@
           <div class="clip-thumb">
             <img v-if="clip.framesrc" :src="clip.framesrc" @error="clip.framesrc=''" />
             <span v-else-if="clip._missing" class="thumb-placeholder">⚠️ 素材缺失</span>
-            <span v-else-if="clip.noKill && clip.clipEnd === 0" class="thumb-placeholder">⚪ 无击杀</span>
+            <span v-else-if="clip.noKill && clip.clipEnd === 0" class="thumb-placeholder">⚪ 无高光</span>
             <span v-else class="thumb-placeholder">加载中...</span>
           </div>
 
@@ -210,7 +210,7 @@
             <div class="clip-source">
               {{ clip.sourceFile }}
               <span v-if="clip._missing" class="missing-tag">⚠️ 素材缺失</span>
-              <span v-if="clip.noKill" class="nokill-tag">⚪ 无击杀</span>
+              <span v-if="clip.noKill" class="nokill-tag">⚪ 无高光</span>
               <span v-if="clip.videoDuration" class="video-dur-tag">视频时长 {{ clip.videoDuration }}s</span>
             </div>
             <div class="clip-row">
@@ -224,16 +224,17 @@
               </div>
             </div>
             <div class="clip-row">
-              <label>击杀时刻</label>
+              <label>高光时刻</label>
               <div class="kill-times">
                 <span v-for="(kt, ki) in clip.killTimes" :key="ki" class="kill-tag">
+                  <span class="event-kind" :class="eventClass(clip, ki)">{{ eventLabel(clip, ki) }}</span>
                   <input type="number" v-model.number="clip.killTimes[ki]" step="0.01" min="0" class="input-kill" @change="validateClip(ci)">
-                  <button class="btn-del" @click="clip.killTimes.splice(ki, 1); validateClip(ci)" :disabled="clip.killTimes.length <= 1">×</button>
+                  <button class="btn-del" @click="removeEvent(ci, ki)" :disabled="clip.killTimes.length <= 1">×</button>
                 </span>
                 <button class="btn-add" @click="addKillTime(ci)">+ 添加</button>
               </div>
             </div>
-            <div class="clip-meta">置信度: {{ clip.maxConfidence }} | 合并击杀: {{ clip.mergedFrom }} 次</div>
+            <div class="clip-meta">置信度: {{ clip.maxConfidence }} | 合并高光: {{ clip.mergedFrom }} 次</div>
           </div>
 
           <button class="btn-delete-clip" @click="deleteClip(ci)" title="删除此片段">🗑</button>
@@ -398,8 +399,8 @@
       <p class="hint">⚠️ 不勾选将使用高效直出模式（单次编码，速度快约 50%）</p>
       <p class="hint" v-if="performanceInfo && performanceInfo.ready">⚡ 设备自适应: {{ performanceInfo.encoderLabel }}，资源档位 {{ resourceButtonLabel }}，扫描 {{ performanceInfo.scanWorkers }} 路并行。4K 原画预估约 {{ performanceInfo.estimated4kFps }} fps，原画加速约 {{ performanceInfo.estimated4kFastFps }} fps。</p>
       <p class="hint">✅ 公开发布兼容格式：统一输出 H.264 / AVC + AAC、yuv420p 和 faststart，不使用 HEVC；程序会自动选择 NVENC、Quick Sync、AMF 或 CPU x264。</p>
-      <p class="hint">⚡ 扫描会自动只解码击杀识别区域；编码器、扫描并行量、线程和码率上限会按当前设备实测结果自动配置。</p>
-      <p class="hint">击杀间隔超过 15 秒时会拆成独立片段，避免把长时间无击杀画面编进成品。</p>
+      <p class="hint">⚡ 扫描会自动识别白色击杀、载具击杀、精准击杀和救援区域；编码器、扫描并行量、线程和码率上限会按当前设备实测结果自动配置。</p>
+      <p class="hint">高光事件间隔超过 15 秒时会拆成独立片段，避免把长时间无高光画面编进成品。</p>
       <div class="modal-btns">
         <button class="btn btn-primary" @click="confirmOutput">确认并开始</button>
         <button class="btn btn-outline" @click="showOutputDialog = false">取消</button>
