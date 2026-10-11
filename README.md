@@ -103,7 +103,7 @@ DeltaHighlight-Windows-Installer-v2.0.9.exe
 
 安装方式
 --------
-1. 双击 DeltaHighlight-Windows-Installer-v2.0.8.exe。
+1. 双击 DeltaHighlight-Windows-Installer-vx.x.x.exe。
 2. 建议安装到 D:\DeltaHighlight。
 3. 若出现智能应用控制等报错，请自行移步至设置，打开隐私与安全，打开Windows安全中心，应用和浏览器控制，智能应用控制的设置，将设置改为关闭。
 
