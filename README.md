@@ -101,6 +101,12 @@ DeltaHighlight-Windows-Installer-v2.0.9.exe
 
 目标电脑不需要单独安装这些组件。由于当前安装程序没有商业代码签名证书，首次运行时 Windows SmartScreen 可能提示“未知发布者”。
 
+安装方式
+--------
+1. 双击 DeltaHighlight-Windows-Installer-v2.0.8.exe。
+2. 建议安装到 D:\DeltaHighlight。
+3. 若出现智能应用控制等报错，请自行移步至设置，打开隐私与安全，打开Windows安全中心，应用和浏览器控制，智能应用控制的设置，将设置改为关闭。
+
 ### 方式二：源码运行
 
 环境要求：
